@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+
+*.zip
+.env/
+.ipynb_checkpoints/
+
+MosMedData/

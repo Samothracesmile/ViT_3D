@@ -147,7 +147,12 @@ class MaskedViT3D(nn.Module):
                  num_classes=2):
         super().__init__()
         self.patch_embed = MaskedPatchEmbed3D(in_channels, patch_size, embed_dim)
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+
+        D, H, W = input_shape
+        d, h, w = patch_size
+        num_patches = math.ceil(D / d) * math.ceil(H / h) * math.ceil(W / w)
+
+        self.pos_embed = PositionalEmbedding(num_patches, embed_dim)
         self.blocks = nn.Sequential(*[
             TransformerBlock(embed_dim, num_heads) for _ in range(depth)
         ])
@@ -156,16 +161,22 @@ class MaskedViT3D(nn.Module):
 
     def forward(self, x, mask=None):
         x_embed, mask_patch = self.patch_embed(x, mask)  # [B, N, C], [B, N]
-        cls_tokens = self.cls_token.expand(x.shape[0], -1, -1)  # [B, 1, C]
+        all_pos = self.pos_embed.pos_embed[:, 1:]  # [1, N, C]
+        cls_token = self.pos_embed.cls_token  # [1, 1, C]
+        cls_pos = self.pos_embed.pos_embed[:, :1]  # [1, 1, C]
 
         output_tokens = []
         for i in range(x.shape[0]):
             if mask_patch is not None:
                 valid_tokens = x_embed[i][mask_patch[i]]  # [N_valid_i, C]
+                valid_pos = all_pos[0, mask_patch[i]].unsqueeze(0)
             else:
                 valid_tokens = x_embed[i]
-            # 拼上 cls_token
-            tokens = torch.cat([cls_tokens[i:i+1], valid_tokens.unsqueeze(0)], dim=1)
+                valid_pos = all_pos
+
+            tokens = torch.cat([cls_token, valid_tokens.unsqueeze(0)], dim=1)
+            pos_tokens = torch.cat([cls_pos, valid_pos], dim=1)
+            tokens = tokens + pos_tokens
             tokens = self.blocks(tokens)
             tokens = self.norm(tokens)
             cls_final = tokens[:, 0]  # [1, C]
